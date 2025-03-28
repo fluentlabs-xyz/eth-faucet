@@ -2,7 +2,6 @@ package chain
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -181,7 +180,13 @@ func TestFillMissedNonces(t *testing.T) {
 
 			filledNonces := make(map[uint64]bool)
 
-			patches := gomonkey.ApplyMethod(reflect.TypeOf(mockRPC), "CallContext",
+			patches := gomonkey.ApplyFunc(getTxCount,
+				func(_ context.Context, _ *rpc.Client, _ common.Address) (uint64, error) {
+					return tc.confirmedNonce, nil
+				})
+			defer patches.Reset()
+
+			patches.ApplyMethod(reflect.TypeOf(mockRPC), "CallContext",
 				func(_ *rpc.Client, _ context.Context, result interface{}, method string, args ...interface{}) error {
 					if method == "txpool_content" {
 						txpoolContent, ok := result.(*TxpoolContent)
@@ -209,37 +214,19 @@ func TestFillMissedNonces(t *testing.T) {
 					}
 					return fmt.Errorf("unexpected method call")
 				})
-			defer patches.Reset()
-
-			patches.ApplyMethod(reflect.TypeOf(mockClient), "NonceAt",
-				func(_ *ethclient.Client, _ context.Context, _ common.Address, _ *big.Int) (uint64, error) {
-					return tc.confirmedNonce, nil
-				})
 
 			patches.ApplyMethod(reflect.TypeOf(mockClient), "PendingNonceAt",
 				func(_ *ethclient.Client, _ context.Context, _ common.Address) (uint64, error) {
 					return tc.pendingNonce, nil
 				})
 
-			patches.ApplyFunc(sendTransactionWithNonce,
-				func(_ context.Context, _ *ethclient.Client, _ common.Address,
-					_ types.Signer, _ *ecdsa.PrivateKey, nonce uint64, _ bool,
-				) (*types.Transaction, error) {
+			patches.ApplyMethod(reflect.TypeOf(txBuilder), "SendTransactionWithNonce",
+				func(_ *TxBuild, _ context.Context, nonce uint64) (common.Hash, error) {
 					filledNonces[nonce] = true
-					tx := types.NewTx(&types.LegacyTx{
-						Nonce:    nonce,
-						GasPrice: big.NewInt(1),
-						Gas:      21000,
-						To:       &fromAddress,
-						Value:    big.NewInt(0),
-						Data:     nil,
-					})
-
-					return tx, nil
+					return common.HexToHash("0x123"), nil
 				})
 
-			err := FillMissedNonces(context.Background(), mockClient, mockRPC, fromAddress,
-				txBuilder.signer, txBuilder.privateKey, false)
+			err := txBuilder.FillMissedNonces(context.Background())
 			if err != nil {
 				t.Errorf("fillMissedNonces failed: %v", err)
 			}

@@ -23,12 +23,6 @@ type TxBuilder interface {
 	Transfer(ctx context.Context, to string, value *big.Int) (common.Hash, error)
 }
 
-// TxpoolContent represents the structure of the txpool_content RPC response
-type TxpoolContent struct {
-	Pending map[string]map[string]interface{} `json:"pending"`
-	Queued  map[string]map[string]interface{} `json:"queued"`
-}
-
 type TxBuild struct {
 	client          bind.ContractTransactor
 	rpcClient       *rpc.Client
@@ -74,7 +68,7 @@ func NewTxBuilder(provider string, privateKey *ecdsa.PrivateKey, chainID *big.In
 	}
 
 	// First fill any nonce gaps that might exist
-	err = FillMissedNonces(context.Background(), client, rpcClient, txBuilder.fromAddress, txBuilder.signer, txBuilder.privateKey, txBuilder.supportsEIP1559)
+	err = txBuilder.FillMissedNonces(context.Background())
 	if err != nil {
 		log.WithError(err).Warn("Failed to fill nonce gaps")
 		return nil, err
@@ -98,53 +92,10 @@ func (b *TxBuild) Transfer(ctx context.Context, to string, value *big.Int) (comm
 	var err error
 	var unsignedTx *types.Transaction
 
-	// Handle different client types
-	switch client := b.client.(type) {
-	case *ethclient.Client:
-		if b.supportsEIP1559 {
-			unsignedTx, err = createEIP1559Tx(ctx, client, b.signer.ChainID(), nonce, &toAddress, value, gasLimit)
-		} else {
-			unsignedTx, err = createLegacyTx(ctx, client, nonce, &toAddress, value, gasLimit)
-		}
-	default:
-		// For other client types (like SimulatedBackend in tests), use the client's methods directly
-		if b.supportsEIP1559 {
-			header, err := b.client.HeaderByNumber(ctx, nil)
-			if err != nil {
-				return common.Hash{}, err
-			}
-
-			gasTipCap, err := b.client.SuggestGasTipCap(ctx)
-			if err != nil {
-				return common.Hash{}, err
-			}
-
-			gasFeeCap := new(big.Int).Mul(header.BaseFee, big.NewInt(2))
-			gasFeeCap = new(big.Int).Add(gasFeeCap, gasTipCap)
-
-			unsignedTx = types.NewTx(&types.DynamicFeeTx{
-				ChainID:   b.signer.ChainID(),
-				Nonce:     nonce,
-				GasTipCap: gasTipCap,
-				GasFeeCap: gasFeeCap,
-				Gas:       gasLimit,
-				To:        &toAddress,
-				Value:     value,
-			})
-		} else {
-			gasPrice, err := b.client.SuggestGasPrice(ctx)
-			if err != nil {
-				return common.Hash{}, err
-			}
-
-			unsignedTx = types.NewTx(&types.LegacyTx{
-				Nonce:    nonce,
-				GasPrice: gasPrice,
-				Gas:      gasLimit,
-				To:       &toAddress,
-				Value:    value,
-			})
-		}
+	if b.supportsEIP1559 {
+		unsignedTx, err = b.buildEIP1559Tx(ctx, &toAddress, value, gasLimit, nonce)
+	} else {
+		unsignedTx, err = b.buildLegacyTx(ctx, &toAddress, value, gasLimit, nonce)
 	}
 
 	if err != nil {
@@ -168,18 +119,53 @@ func (b *TxBuild) Transfer(ctx context.Context, to string, value *big.Int) (comm
 	return signedTx.Hash(), nil
 }
 
+func (b *TxBuild) buildEIP1559Tx(ctx context.Context, to *common.Address, value *big.Int, gasLimit uint64, nonce uint64) (*types.Transaction, error) {
+	header, err := b.client.HeaderByNumber(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	gasTipCap, err := b.client.SuggestGasTipCap(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// gasFeeCap = baseFee * 2 + gasTipCap
+	gasFeeCap := new(big.Int).Mul(header.BaseFee, big.NewInt(2))
+	gasFeeCap = new(big.Int).Add(gasFeeCap, gasTipCap)
+
+	return types.NewTx(&types.DynamicFeeTx{
+		ChainID:   b.signer.ChainID(),
+		Nonce:     nonce,
+		GasTipCap: gasTipCap,
+		GasFeeCap: gasFeeCap,
+		Gas:       gasLimit,
+		To:        to,
+		Value:     value,
+	}), nil
+}
+
+func (b *TxBuild) buildLegacyTx(ctx context.Context, to *common.Address, value *big.Int, gasLimit uint64, nonce uint64) (*types.Transaction, error) {
+	gasPrice, err := b.client.SuggestGasPrice(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return types.NewTx(&types.LegacyTx{
+		Nonce:    nonce,
+		GasPrice: gasPrice,
+		Gas:      gasLimit,
+		To:       to,
+		Value:    value,
+	}), nil
+}
+
 func (b *TxBuild) getAndIncrementNonce() uint64 {
 	return atomic.AddUint64(&b.nonce, 1) - 1
 }
 
 func (b *TxBuild) refreshNonce(ctx context.Context) {
-	ethClient, ok := b.client.(*ethclient.Client)
-	if !ok {
-		log.Error("client is not an ethclient.Client")
-		return
-	}
-
-	nonce, err := ethClient.PendingNonceAt(ctx, b.Sender())
+	nonce, err := b.client.PendingNonceAt(ctx, b.Sender())
 	if err != nil {
 		log.WithFields(log.Fields{
 			"address": b.Sender(),
@@ -191,6 +177,102 @@ func (b *TxBuild) refreshNonce(ctx context.Context) {
 	atomic.StoreUint64(&b.nonce, nonce)
 }
 
+func (b *TxBuild) SendTransactionWithNonce(ctx context.Context, nonce uint64) (common.Hash, error) {
+	value := big.NewInt(0)
+	gasLimit := uint64(21000)
+
+	var err error
+	var unsignedTx *types.Transaction
+
+	if b.supportsEIP1559 {
+		unsignedTx, err = b.buildEIP1559Tx(ctx, &b.fromAddress, value, gasLimit, nonce)
+	} else {
+		unsignedTx, err = b.buildLegacyTx(ctx, &b.fromAddress, value, gasLimit, nonce)
+	}
+
+	if err != nil {
+		return common.Hash{}, err
+	}
+
+	signedTx, err := types.SignTx(unsignedTx, b.signer, b.privateKey)
+	if err != nil {
+		return common.Hash{}, err
+	}
+
+	if err = b.client.SendTransaction(ctx, signedTx); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "nonce") ||
+			strings.Contains(strings.ToLower(err.Error()), "underpriced") {
+			// instead of refreshing nonce here, we should just return the error - after restart we will fill all missed nonces
+			log.Fatal("Critical error:", err)
+		}
+		return common.Hash{}, err
+	}
+
+	return signedTx.Hash(), nil
+}
+
+func (b *TxBuild) FillMissedNonces(ctx context.Context,
+) error {
+	confirmedNonce, err := getTxCount(ctx, b.rpcClient, b.Sender())
+	if err != nil {
+		return fmt.Errorf("failed to get confirmed nonce: %w", err)
+	}
+
+	pendingNonce, err := b.client.PendingNonceAt(ctx, b.Sender())
+	if err != nil {
+		return fmt.Errorf("failed to get pending nonce: %w", err)
+	}
+
+	if pendingNonce == confirmedNonce {
+		log.Debug("No nonce gaps detected - confirmed and pending nonces are equals")
+		return nil
+	}
+
+	txpoolContent, err := getTxpoolContent(ctx, b.rpcClient)
+	if err != nil {
+		return err
+	}
+
+	existingNonces, smallestQueuedNonce, hasQueuedTx := processTxpoolContent(txpoolContent, b.Sender())
+
+	var gaps []uint64
+	for nonce := confirmedNonce; nonce < pendingNonce; nonce++ {
+		if !existingNonces[nonce] {
+			gaps = append(gaps, nonce)
+		}
+	}
+
+	if len(gaps) == 0 {
+		log.Info("No nonce gaps to fill")
+		return nil
+	}
+
+	// Log the gaps we're going to fill
+	log.WithFields(log.Fields{
+		"confirmedNonce":      confirmedNonce,
+		"pendingNonce":        pendingNonce,
+		"hasQueuedTx":         hasQueuedTx,
+		"smallestQueuedNonce": smallestQueuedNonce,
+		"gapCount":            len(gaps),
+	}).Warn("Filling nonce gaps")
+
+	for _, nonce := range gaps {
+		txHash, err := b.SendTransactionWithNonce(ctx, nonce)
+		if err != nil {
+			err := fmt.Errorf("failed to fill nonce gap %d: %w", nonce, err)
+			// If we fail to fill the gap, we should restart
+			log.Fatalf("Critical error: %v", err)
+		}
+
+		log.WithFields(log.Fields{
+			"nonce":  nonce,
+			"txHash": txHash.Hex(),
+		}).Info("Successfully filled missed nonce")
+	}
+
+	return nil
+}
+
 func checkEIP1559Support(client *ethclient.Client) (bool, error) {
 	header, err := client.HeaderByNumber(context.Background(), nil)
 	if err != nil {
@@ -200,89 +282,10 @@ func checkEIP1559Support(client *ethclient.Client) (bool, error) {
 	return header.BaseFee != nil && header.BaseFee.Cmp(big.NewInt(0)) > 0, nil
 }
 
-func createEIP1559Tx(ctx context.Context, client *ethclient.Client, chainID *big.Int,
-	nonce uint64, to *common.Address, value *big.Int, gasLimit uint64,
-) (*types.Transaction, error) {
-	header, err := client.HeaderByNumber(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	gasTipCap, err := client.SuggestGasTipCap(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Boost by 20% to ensure quick inclusion
-	gasTipCap = new(big.Int).Mul(gasTipCap, big.NewInt(120))
-	gasTipCap = new(big.Int).Div(gasTipCap, big.NewInt(100))
-
-	// gasFeeCap = baseFee * 2 + gasTipCap
-	gasFeeCap := new(big.Int).Mul(header.BaseFee, big.NewInt(2))
-	gasFeeCap = new(big.Int).Add(gasFeeCap, gasTipCap)
-
-	return types.NewTx(&types.DynamicFeeTx{
-		ChainID:   chainID,
-		Nonce:     nonce,
-		GasTipCap: gasTipCap,
-		GasFeeCap: gasFeeCap,
-		Gas:       gasLimit,
-		To:        to,
-		Value:     value,
-	}), nil
-}
-
-func createLegacyTx(ctx context.Context, client *ethclient.Client,
-	nonce uint64, to *common.Address, value *big.Int, gasLimit uint64,
-) (*types.Transaction, error) {
-	gasPrice, err := client.SuggestGasPrice(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Boost by 20%
-	gasPrice = new(big.Int).Mul(gasPrice, big.NewInt(120))
-	gasPrice = new(big.Int).Div(gasPrice, big.NewInt(100))
-
-	return types.NewTx(&types.LegacyTx{
-		Nonce:    nonce,
-		GasPrice: gasPrice,
-		Gas:      gasLimit,
-		To:       to,
-		Value:    value,
-	}), nil
-}
-
-func sendTransactionWithNonce(ctx context.Context, client *ethclient.Client, address common.Address,
-	signer types.Signer, privateKey *ecdsa.PrivateKey, nonce uint64,
-	supportsEIP1559 bool,
-) (*types.Transaction, error) {
-	value := big.NewInt(0)
-	gasLimit := uint64(21000)
-
-	var tx *types.Transaction
-	var err error
-
-	if supportsEIP1559 {
-		tx, err = createEIP1559Tx(ctx, client, signer.ChainID(), nonce, &address, value, gasLimit)
-	} else {
-		tx, err = createLegacyTx(ctx, client, nonce, &address, value, gasLimit)
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	signedTx, err := types.SignTx(tx, signer, privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign transaction: %w", err)
-	}
-
-	if err = client.SendTransaction(ctx, signedTx); err != nil {
-		return nil, fmt.Errorf("failed to send transaction: %w", err)
-	}
-
-	return signedTx, nil
+// TxpoolContent represents the structure of the txpool_content RPC response
+type TxpoolContent struct {
+	Pending map[string]map[string]interface{} `json:"pending"`
+	Queued  map[string]map[string]interface{} `json:"queued"`
 }
 
 func getTxpoolContent(ctx context.Context, rpcClient *rpc.Client) (*TxpoolContent, error) {
@@ -331,67 +334,12 @@ func processTxpoolContent(txpoolContent *TxpoolContent, address common.Address) 
 	return existingNonces, smallestQueuedNonce, hasQueuedTx
 }
 
-// FillMissedNonces detects and fills nonce gaps for the account
-func FillMissedNonces(ctx context.Context, client *ethclient.Client, rpcClient *rpc.Client,
-	address common.Address, signer types.Signer, privateKey *ecdsa.PrivateKey,
-	supportsEIP1559 bool,
-) error {
-	confirmedNonce, err := client.NonceAt(ctx, address, nil)
+// tx count == next nonce
+func getTxCount(ctx context.Context, rpc *rpc.Client, address common.Address) (uint64, error) {
+	var nonce uint64
+	err := rpc.CallContext(ctx, &nonce, "eth_getTransactionCount", address.Hex(), "latest")
 	if err != nil {
-		return fmt.Errorf("failed to get confirmed nonce: %w", err)
+		return 0, fmt.Errorf("failed to get pending nonce: %w", err)
 	}
-
-	pendingNonce, err := client.PendingNonceAt(ctx, address)
-	if err != nil {
-		return fmt.Errorf("failed to get pending nonce: %w", err)
-	}
-
-	if pendingNonce == confirmedNonce {
-		log.Debug("No nonce gaps detected - confirmed and pending nonces are equals")
-		return nil
-	}
-
-	txpoolContent, err := getTxpoolContent(ctx, rpcClient)
-	if err != nil {
-		return err
-	}
-
-	existingNonces, smallestQueuedNonce, hasQueuedTx := processTxpoolContent(txpoolContent, address)
-
-	var gaps []uint64
-	for nonce := confirmedNonce; nonce < pendingNonce; nonce++ {
-		if !existingNonces[nonce] {
-			gaps = append(gaps, nonce)
-		}
-	}
-
-	if len(gaps) == 0 {
-		log.Info("No nonce gaps to fill")
-		return nil
-	}
-
-	// Log the gaps we're going to fill
-	log.WithFields(log.Fields{
-		"confirmedNonce":      confirmedNonce,
-		"pendingNonce":        pendingNonce,
-		"hasQueuedTx":         hasQueuedTx,
-		"smallestQueuedNonce": smallestQueuedNonce,
-		"gapCount":            len(gaps),
-	}).Warn("Filling nonce gaps")
-
-	for _, nonce := range gaps {
-		tx, err := sendTransactionWithNonce(ctx, client, address, signer, privateKey, nonce, supportsEIP1559)
-		if err != nil {
-			err := fmt.Errorf("failed to fill nonce gap %d: %w", nonce, err)
-			// If we fail to fill the gap, we should restart
-			log.Fatalf("Critical error: %v", err)
-		}
-
-		log.WithFields(log.Fields{
-			"nonce":  nonce,
-			"txHash": tx.Hash().Hex(),
-		}).Info("Successfully filled missed nonce")
-	}
-
-	return nil
+	return nonce, nil
 }
