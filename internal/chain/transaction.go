@@ -5,9 +5,11 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -115,6 +117,8 @@ func (b *TxBuild) Transfer(ctx context.Context, to string, value *big.Int) (comm
 		}
 		return common.Hash{}, err
 	}
+
+	go WatchReceipt(b.rpcClient, signedTx.Hash())
 
 	return signedTx.Hash(), nil
 }
@@ -342,4 +346,37 @@ func getTxCount(ctx context.Context, rpc *rpc.Client, address common.Address) (u
 		return 0, fmt.Errorf("failed to get pending nonce: %w", err)
 	}
 	return nonce, nil
+}
+
+// WatchReceipt monitors transaction receipt for 15 seconds
+func WatchReceipt(client *rpc.Client, txHash common.Hash) {
+	log.WithField("txHash", txHash.Hex()).Info("Monitoring transaction receipt")
+
+	timer := time.NewTimer(15 * time.Second)
+	defer timer.Stop()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timer.C:
+			log.WithField("txHash", txHash.Hex()).Error("Receipt not received in 15 seconds, exiting")
+			os.Exit(1)
+
+		case <-ticker.C:
+			var receipt *types.Receipt
+			err := client.CallContext(context.Background(), &receipt, "eth_getTransactionReceipt", txHash)
+			if err != nil || receipt == nil {
+				continue
+			}
+
+			log.WithFields(log.Fields{
+				"txHash":      txHash.Hex(),
+				"blockNumber": receipt.BlockNumber,
+				"status":      receipt.Status,
+			}).Info("Transaction confirmed")
+			return
+		}
+	}
 }
