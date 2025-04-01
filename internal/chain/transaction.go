@@ -340,11 +340,22 @@ func processTxpoolContent(txpoolContent *TxpoolContent, address common.Address) 
 
 // tx count == next nonce
 func getTxCount(ctx context.Context, rpc *rpc.Client, address common.Address) (uint64, error) {
-	var nonce uint64
-	err := rpc.CallContext(ctx, &nonce, "eth_getTransactionCount", address.Hex(), "latest")
+	var hexString string
+	err := rpc.CallContext(ctx, &hexString, "eth_getTransactionCount", address.Hex(), "latest")
 	if err != nil {
 		return 0, fmt.Errorf("failed to get pending nonce: %w", err)
 	}
+	if !strings.HasPrefix(hexString, "0x") {
+		return 0, fmt.Errorf("invalid hex string format: %s", hexString)
+	}
+
+	trimmedHex := strings.TrimPrefix(hexString, "0x")
+
+	nonce, err := strconv.ParseUint(trimmedHex, 16, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse hex string to uint64: %w", err)
+	}
+
 	return nonce, nil
 }
 
