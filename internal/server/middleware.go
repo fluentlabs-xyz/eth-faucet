@@ -59,7 +59,7 @@ func (l *Limiter) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.Ha
 	if l.limitByKey(w, address) || l.limitByKey(w, clientIP) {
 		l.mutex.Unlock()
 		if l.metrics != nil {
-			l.metrics.IncrementRateLimited()
+			l.metrics.RecordFilteredRequest("rate_limit", r.URL.Path)
 		}
 		return
 	}
@@ -135,13 +135,9 @@ func (c *Captcha) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.Ha
 	if !response.Success {
 		renderJSON(w, claimResponse{Message: "Captcha verification failed, please try again"}, http.StatusTooManyRequests)
 		if c.metrics != nil {
-			c.metrics.IncrementCaptchaFailed()
+			c.metrics.RecordFilteredRequest("captcha", r.URL.Path)
 		}
 		return
-	}
-
-	if c.metrics != nil {
-		c.metrics.IncrementCaptchasSolved()
 	}
 
 	next.ServeHTTP(w, r)
@@ -163,21 +159,14 @@ func NewRequestMetrics(metrics *metrics.Metrics) *RequestMetrics {
 func (m *RequestMetrics) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 	start := time.Now()
 
-	if m.metrics != nil {
-		m.metrics.IncrementActiveConnections()
-		defer m.metrics.DecrementActiveConnections()
-	}
-
 	next.ServeHTTP(w, r)
 
 	if m.metrics != nil {
 		duration := time.Since(start).Seconds()
 		statusCode := strconv.Itoa(w.(negroni.ResponseWriter).Status())
+		path := r.URL.Path
 
-		m.metrics.RecordRequest(statusCode, r.Method)
-
-		if r.URL.Path == "/api/claim" || r.URL.Path == "/api/info" || r.URL.Path == "/metrics" {
-			m.metrics.ObserveRequestDuration(r.URL.Path, r.Method, duration)
-		}
+		m.metrics.RecordRequest(statusCode, r.Method, path)
+		m.metrics.ObserveRequestDuration(path, r.Method, duration)
 	}
 }

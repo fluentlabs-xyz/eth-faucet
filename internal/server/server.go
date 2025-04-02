@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -45,7 +44,7 @@ func (s *Server) setupRouter() *http.ServeMux {
 	hcaptcha := NewCaptcha(s.cfg.hcaptchaSiteKey, s.cfg.hcaptchaSecret, s.metrics)
 	metricsMiddleware := NewRequestMetrics(s.metrics)
 
-	router.Handle("/api/claim", negroni.New(limiter, hcaptcha, metricsMiddleware, negroni.Wrap(s.handleClaim())))
+	router.Handle("/api/claim", negroni.New(metricsMiddleware, limiter, hcaptcha, negroni.Wrap(s.handleClaim())))
 	router.Handle("/api/info", negroni.New(metricsMiddleware, negroni.Wrap(s.handleInfo())))
 
 	return router
@@ -84,35 +83,12 @@ func (s *Server) handleClaim() http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		// Record transfer attempt
-		if s.metrics != nil {
-			s.metrics.RecordTransfer("attempt")
-		}
-
 		txHash, err := s.Transfer(ctx, address, chain.EtherToWei(s.cfg.payout))
 		if err != nil {
 			log.WithError(err).Error("Failed to send transaction")
 			renderJSON(w, claimResponse{Message: err.Error()}, http.StatusInternalServerError)
 
-			// Record failed transfer with error type
-			if s.metrics != nil {
-				errorType := "unknown"
-				if strings.Contains(strings.ToLower(err.Error()), "insufficient funds") {
-					errorType = "insufficient_funds"
-				} else if strings.Contains(strings.ToLower(err.Error()), "nonce") {
-					errorType = "nonce_error"
-				} else if strings.Contains(strings.ToLower(err.Error()), "gas") {
-					errorType = "gas_error"
-				}
-
-				s.metrics.RecordTransfer("failure_" + errorType)
-			}
 			return
-		}
-
-		if s.metrics != nil {
-			s.metrics.RecordTransfer("success")
-			s.metrics.ObserveTransferAmount(s.cfg.payout)
 		}
 
 		log.WithFields(log.Fields{

@@ -21,17 +21,8 @@ type Metrics struct {
 	RequestsTotal   *prometheus.CounterVec
 	RequestDuration *prometheus.HistogramVec
 
-	// Faucet metrics
-	TransfersTotal *prometheus.CounterVec
-	TransferAmount *prometheus.HistogramVec
-
-	// Rate limiting metrics
-	RateLimitedTotal   prometheus.Counter
-	CaptchaFailedTotal prometheus.Counter
-	CaptchaSolvedTotal prometheus.Counter
-
-	// Connection metrics
-	ActiveConnections prometheus.Gauge
+	// Filtered requests metrics
+	FilteredRequestsTotal *prometheus.CounterVec
 
 	// Faucet address
 	faucetAddress string
@@ -50,9 +41,9 @@ func NewMetrics(namespace string, faucetAddress string, providerURL string, addr
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Name:      "http_requests_total",
-				Help:      "Total number of HTTP requests processed, partitioned by status code and HTTP method.",
+				Help:      "Total number of HTTP requests processed, partitioned by status code, HTTP method, and path.",
 			},
-			[]string{"code", "method"},
+			[]string{"code", "method", "path"},
 		),
 		RequestDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -61,64 +52,22 @@ func NewMetrics(namespace string, faucetAddress string, providerURL string, addr
 				Help:      "Duration of HTTP requests in seconds.",
 				Buckets:   prometheus.DefBuckets,
 			},
-			[]string{"handler", "method"},
+			[]string{"path", "method"},
 		),
-		TransfersTotal: prometheus.NewCounterVec(
+		FilteredRequestsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
-				Name:      "transfers_total",
-				Help:      "Total number of ETH transfers processed, partitioned by status.",
+				Name:      "filtered_requests_total",
+				Help:      "Total number of requests filtered by middleware, partitioned by reason and path.",
 			},
-			[]string{"status", "address"},
-		),
-		TransferAmount: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Name:      "transfer_amount_ether",
-				Help:      "Amount of ETH transferred in each successful transaction.",
-				Buckets:   prometheus.LinearBuckets(0.1, 0.1, 10), // 0.1 to 1.0 ETH in 0.1 increments
-			},
-			[]string{"address"},
-		),
-		RateLimitedTotal: prometheus.NewCounter(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "rate_limited_total",
-				Help:      "Total number of requests that were rate-limited.",
-			},
-		),
-		CaptchaFailedTotal: prometheus.NewCounter(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "captcha_failed_total",
-				Help:      "Total number of requests with failed captcha verification.",
-			},
-		),
-		CaptchaSolvedTotal: prometheus.NewCounter(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Name:      "captchas_solved_total",
-				Help:      "Total number of captchas successfully solved.",
-			},
-		),
-		ActiveConnections: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Namespace: namespace,
-				Name:      "active_connections",
-				Help:      "Current number of active connections.",
-			},
+			[]string{"reason", "path"},
 		),
 	}
 
 	// Register metrics with our custom registry
 	registry.MustRegister(m.RequestsTotal)
 	registry.MustRegister(m.RequestDuration)
-	registry.MustRegister(m.TransfersTotal)
-	registry.MustRegister(m.TransferAmount)
-	registry.MustRegister(m.RateLimitedTotal)
-	registry.MustRegister(m.CaptchaFailedTotal)
-	registry.MustRegister(m.CaptchaSolvedTotal)
-	registry.MustRegister(m.ActiveConnections)
+	registry.MustRegister(m.FilteredRequestsTotal)
 
 	registry.MustRegister(collectors.NewGoCollector())
 	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -197,47 +146,59 @@ func (m *Metrics) StartServer(port int, path string) error {
 	return nil
 }
 
-// RecordRequest records a request with the given status code and method
-func (m *Metrics) RecordRequest(code string, method string) {
-	m.RequestsTotal.WithLabelValues(code, method).Inc()
+// RecordRequest records a request with the given status code, method, and path
+func (m *Metrics) RecordRequest(code string, method string, path string) {
+	m.RequestsTotal.WithLabelValues(code, method, path).Inc()
 }
 
 // ObserveRequestDuration observes the duration of a request
-func (m *Metrics) ObserveRequestDuration(handler string, method string, duration float64) {
-	m.RequestDuration.WithLabelValues(handler, method).Observe(duration)
+func (m *Metrics) ObserveRequestDuration(path string, method string, duration float64) {
+	m.RequestDuration.WithLabelValues(path, method).Observe(duration)
 }
 
-// RecordTransfer records a transfer with the given status
+// RecordFilteredRequest records a filtered request with the given reason and path
+func (m *Metrics) RecordFilteredRequest(reason string, path string) {
+	m.FilteredRequestsTotal.WithLabelValues(reason, path).Inc()
+}
+
+// Legacy methods for backward compatibility
+
+// RecordTransfer is a legacy method that maps to RecordRequest
 func (m *Metrics) RecordTransfer(status string) {
-	m.TransfersTotal.WithLabelValues(status, m.faucetAddress).Inc()
+	// No-op as we're not tracking transfers separately anymore
 }
 
-// ObserveTransferAmount observes the amount of a transfer
+// ObserveTransferAmount is a legacy method that is now a no-op
 func (m *Metrics) ObserveTransferAmount(amount float64) {
-	m.TransferAmount.WithLabelValues(m.faucetAddress).Observe(amount)
+	// No-op as we're not tracking transfer amounts anymore
 }
 
-// IncrementRateLimited increments the rate limited counter
+// IncrementRateLimited is a legacy method that maps to RecordFilteredRequest
 func (m *Metrics) IncrementRateLimited() {
-	m.RateLimitedTotal.Inc()
+	// No-op as we'll use RecordFilteredRequest directly
 }
 
-// IncrementCaptchaFailed increments the captcha failed counter
+// IncrementCaptchaFailed is a legacy method that maps to RecordFilteredRequest
 func (m *Metrics) IncrementCaptchaFailed() {
-	m.CaptchaFailedTotal.Inc()
+	// No-op as we'll use RecordFilteredRequest directly
 }
 
-// IncrementCaptchasSolved increments the captchas solved counter
+// IncrementCaptchasSolved is a legacy method that is now a no-op
 func (m *Metrics) IncrementCaptchasSolved() {
-	m.CaptchaSolvedTotal.Inc()
+	// No-op as we're not tracking this separately anymore
 }
 
-// IncrementActiveConnections increments the active connections gauge
+// RecordFaucetRequest is a legacy method that is now a no-op
+func (m *Metrics) RecordFaucetRequest(status string) {
+	// No-op as we're not tracking this separately anymore
+}
+
+// IncrementActiveConnections is a legacy method that is now a no-op
 func (m *Metrics) IncrementActiveConnections() {
-	m.ActiveConnections.Inc()
+	// No-op as we're not tracking active connections anymore
 }
 
-// DecrementActiveConnections decrements the active connections gauge
+// DecrementActiveConnections is a legacy method that is now a no-op
 func (m *Metrics) DecrementActiveConnections() {
-	m.ActiveConnections.Dec()
+	// No-op as we're not tracking active connections anymore
 }
