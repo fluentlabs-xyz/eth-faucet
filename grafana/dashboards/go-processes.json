@@ -1,4 +1,34 @@
 {
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "11.6.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    }
+  ],
   "annotations": {
     "list": [
       {
@@ -25,7 +55,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -124,7 +154,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
           "expr": "process_resident_memory_bytes{job=~\"^($job)$\"}",
@@ -139,7 +169,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
           "expr": "process_virtual_memory_bytes{job=~\"^($job)$\"}",
@@ -158,7 +188,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
+        "uid": "${DS_PROMETHEUS}"
       },
       "fieldConfig": {
         "defaults": {
@@ -240,7 +270,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
           "expr": "rate(process_resident_memory_bytes{job=~\"^($job)$\"}[$interval])",
@@ -255,7 +285,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
           "expr": "deriv(process_virtual_memory_bytes{job=~\"^($job)$\"}[$interval])",

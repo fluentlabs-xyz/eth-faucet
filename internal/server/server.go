@@ -39,7 +39,6 @@ func (s *Server) setupRouter() *http.ServeMux {
 	router := http.NewServeMux()
 	router.Handle("/", http.FileServer(web.Dist()))
 
-	// Create middleware with injected metrics
 	limiter := NewLimiter(s.cfg.proxyCount, time.Duration(s.cfg.interval)*time.Minute, s.metrics)
 	hcaptcha := NewCaptcha(s.cfg.hcaptchaSiteKey, s.cfg.hcaptchaSecret, s.metrics)
 	metricsMiddleware := NewRequestMetrics(s.metrics)
@@ -66,7 +65,6 @@ func (s *Server) Run() {
 
 	n := negroni.New(negroni.NewRecovery(), negroni.NewLogger())
 	n.UseHandler(s.setupRouter())
-
 	log.Infof("Starting http server %d", s.cfg.httpPort)
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(s.cfg.httpPort), n))
 }
@@ -82,12 +80,10 @@ func (s *Server) handleClaim() http.HandlerFunc {
 		address, _ := readAddress(r)
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-
 		txHash, err := s.Transfer(ctx, address, chain.EtherToWei(s.cfg.payout))
 		if err != nil {
 			log.WithError(err).Error("Failed to send transaction")
 			renderJSON(w, claimResponse{Message: err.Error()}, http.StatusInternalServerError)
-
 			return
 		}
 

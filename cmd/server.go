@@ -63,10 +63,8 @@ func Execute() {
 	if err != nil {
 		panic(fmt.Errorf("cannot connect to web3 provider: %w", err))
 	}
-
 	config := server.NewConfig(*netnameFlag, *symbolFlag, *httpPortFlag, *intervalFlag, *proxyCntFlag, *payoutFlag, *hcaptchaSiteKeyFlag, *hcaptchaSecretFlag, *metricsPortFlag, *metricsPathFlag, *providerFlag)
-	srv := server.NewServer(txBuilder, config)
-	go srv.Run()
+	go server.NewServer(txBuilder, config).Run()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
