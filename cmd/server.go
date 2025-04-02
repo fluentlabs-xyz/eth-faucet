@@ -24,6 +24,9 @@ var (
 	proxyCntFlag = flag.Int("proxycount", 0, "Count of reverse proxies in front of the server")
 	versionFlag  = flag.Bool("version", false, "Print version number")
 
+	metricsPortFlag = flag.Int("metrics.port", 9090, "Port for Prometheus metrics (0 to disable)")
+	metricsPathFlag = flag.String("metrics.path", "/metrics", "Path for Prometheus metrics endpoint")
+
 	payoutFlag   = flag.Float64("faucet.amount", 1, "Number of Ethers to transfer per user request")
 	intervalFlag = flag.Int("faucet.minutes", 1440, "Number of minutes to wait between funding rounds")
 	netnameFlag  = flag.String("faucet.name", "testnet", "Network name to display on the frontend")
@@ -60,8 +63,10 @@ func Execute() {
 	if err != nil {
 		panic(fmt.Errorf("cannot connect to web3 provider: %w", err))
 	}
-	config := server.NewConfig(*netnameFlag, *symbolFlag, *httpPortFlag, *intervalFlag, *proxyCntFlag, *payoutFlag, *hcaptchaSiteKeyFlag, *hcaptchaSecretFlag)
-	go server.NewServer(txBuilder, config).Run()
+
+	config := server.NewConfig(*netnameFlag, *symbolFlag, *httpPortFlag, *intervalFlag, *proxyCntFlag, *payoutFlag, *hcaptchaSiteKeyFlag, *hcaptchaSecretFlag, *metricsPortFlag, *metricsPathFlag, *providerFlag)
+	srv := server.NewServer(txBuilder, config)
+	go srv.Run()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)

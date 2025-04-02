@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/kataras/hcaptcha"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/negroni/v3"
+
+	"github.com/chainflag/eth-faucet/internal/metrics"
 )
 
 type Limiter struct {
@@ -20,15 +23,17 @@ type Limiter struct {
 	cache      *ttlcache.Cache
 	proxyCount int
 	ttl        time.Duration
+	metrics    *metrics.Metrics
 }
 
-func NewLimiter(proxyCount int, ttl time.Duration) *Limiter {
+func NewLimiter(proxyCount int, ttl time.Duration, metrics *metrics.Metrics) *Limiter {
 	cache := ttlcache.NewCache()
 	cache.SkipTTLExtensionOnHit(true)
 	return &Limiter{
 		cache:      cache,
 		proxyCount: proxyCount,
 		ttl:        ttl,
+		metrics:    metrics,
 	}
 }
 
@@ -53,6 +58,9 @@ func (l *Limiter) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.Ha
 	l.mutex.Lock()
 	if l.limitByKey(w, address) || l.limitByKey(w, clientIP) {
 		l.mutex.Unlock()
+		if l.metrics != nil {
+			l.metrics.IncrementRateLimited()
+		}
 		return
 	}
 	l.cache.SetWithTTL(address, true, l.ttl)
@@ -102,16 +110,18 @@ func getClientIPFromRequest(proxyCount int, r *http.Request) string {
 }
 
 type Captcha struct {
-	client *hcaptcha.Client
-	secret string
+	client  *hcaptcha.Client
+	secret  string
+	metrics *metrics.Metrics
 }
 
-func NewCaptcha(hcaptchaSiteKey, hcaptchaSecret string) *Captcha {
+func NewCaptcha(hcaptchaSiteKey, hcaptchaSecret string, metrics *metrics.Metrics) *Captcha {
 	client := hcaptcha.New(hcaptchaSecret)
 	client.SiteKey = hcaptchaSiteKey
 	return &Captcha{
-		client: client,
-		secret: hcaptchaSecret,
+		client:  client,
+		secret:  hcaptchaSecret,
+		metrics: metrics,
 	}
 }
 
@@ -124,8 +134,50 @@ func (c *Captcha) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.Ha
 	response := c.client.VerifyToken(r.Header.Get("h-captcha-response"))
 	if !response.Success {
 		renderJSON(w, claimResponse{Message: "Captcha verification failed, please try again"}, http.StatusTooManyRequests)
+		if c.metrics != nil {
+			c.metrics.IncrementCaptchaFailed()
+		}
 		return
 	}
 
+	if c.metrics != nil {
+		c.metrics.IncrementCaptchasSolved()
+	}
+
 	next.ServeHTTP(w, r)
+}
+
+// RequestMetrics is a middleware that records Prometheus metrics for HTTP requests
+type RequestMetrics struct {
+	metrics *metrics.Metrics
+}
+
+// NewRequestMetrics creates a new metrics middleware
+func NewRequestMetrics(metrics *metrics.Metrics) *RequestMetrics {
+	return &RequestMetrics{
+		metrics: metrics,
+	}
+}
+
+// ServeHTTP implements the negroni.Handler interface
+func (m *RequestMetrics) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	start := time.Now()
+
+	if m.metrics != nil {
+		m.metrics.IncrementActiveConnections()
+		defer m.metrics.DecrementActiveConnections()
+	}
+
+	next.ServeHTTP(w, r)
+
+	if m.metrics != nil {
+		duration := time.Since(start).Seconds()
+		statusCode := strconv.Itoa(w.(negroni.ResponseWriter).Status())
+
+		m.metrics.RecordRequest(statusCode, r.Method)
+
+		if r.URL.Path == "/api/claim" || r.URL.Path == "/api/info" || r.URL.Path == "/metrics" {
+			m.metrics.ObserveRequestDuration(r.URL.Path, r.Method, duration)
+		}
+	}
 }
