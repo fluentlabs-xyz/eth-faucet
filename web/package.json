@@ -10,6 +10,7 @@
     "prettier": "prettier --write --plugin prettier-plugin-svelte 'src/**/*.{css,html,js,svelte}'"
   },
   "devDependencies": {
+    "@originjs/vite-plugin-federation": "^1.4.1",
     "@sveltejs/vite-plugin-svelte": "^3.1.1",
     "prettier": "^3.0.0",
     "prettier-plugin-svelte": "^3.0.0",
