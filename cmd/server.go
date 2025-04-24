@@ -39,6 +39,12 @@ var (
 
 	hcaptchaSiteKeyFlag = flag.String("hcaptcha.sitekey", os.Getenv("HCAPTCHA_SITEKEY"), "hCaptcha sitekey")
 	hcaptchaSecretFlag  = flag.String("hcaptcha.secret", os.Getenv("HCAPTCHA_SECRET"), "hCaptcha secret")
+
+	// API-only mode flags
+	apiOnlyFlag     = flag.Bool("api.only", false, "Run in API-only mode without serving the frontend")
+	corsAllowedFlag = flag.String("api.cors.allowed", "*", "Comma-separated list of allowed CORS origins in API-only mode")
+	corsHeadersFlag = flag.String("api.cors.headers", "Content-Type,Authorization", "Comma-separated list of allowed CORS headers")
+	corsMethodsFlag = flag.String("api.cors.methods", "GET,POST,OPTIONS", "Comma-separated list of allowed CORS methods")
 )
 
 func init() {
@@ -63,7 +69,7 @@ func Execute() {
 	if err != nil {
 		panic(fmt.Errorf("cannot connect to web3 provider: %w", err))
 	}
-	config := server.NewConfig(*netnameFlag, *symbolFlag, *httpPortFlag, *intervalFlag, *proxyCntFlag, *payoutFlag, *hcaptchaSiteKeyFlag, *hcaptchaSecretFlag, *metricsPortFlag, *metricsPathFlag, *providerFlag)
+	config := server.NewConfig(*netnameFlag, *symbolFlag, *httpPortFlag, *intervalFlag, *proxyCntFlag, *payoutFlag, *hcaptchaSiteKeyFlag, *hcaptchaSecretFlag, *metricsPortFlag, *metricsPathFlag, *providerFlag, *apiOnlyFlag, *corsAllowedFlag, *corsHeadersFlag, *corsMethodsFlag)
 	go server.NewServer(txBuilder, config).Run()
 
 	c := make(chan os.Signal, 1)

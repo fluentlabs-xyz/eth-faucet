@@ -25,17 +25,20 @@ The faucet is a web application with the goal of distributing small amounts of E
 ### Installation
 
 1. Clone the repository and navigate to the app’s directory
+
 ```bash
 git clone https://github.com/chainflag/eth-faucet.git
 cd eth-faucet
 ```
 
 2. Bundle frontend with Vite
+
 ```bash
 go generate
 ```
 
-3. Build Go project 
+3. Build Go project
+
 ```bash
 go build -o eth-faucet
 ```
@@ -57,6 +60,7 @@ go build -o eth-faucet
 ### Configuration
 
 You can configure the funding account by using environment variables instead of command-line flags:
+
 ```bash
 export WEB3_PROVIDER=rpc_endpoint
 export PRIVATE_KEY=hex_private_key
@@ -71,6 +75,7 @@ echo "your_keystore_password" > `pwd`/password.txt
 ```
 
 Then run the faucet application without the wallet command-line flags:
+
 ```bash
 ./eth-faucet -httpport 8080
 ```
@@ -89,6 +94,26 @@ The following are the available command-line flags(excluding above wallet flags)
 | -faucet.symbol    | Token symbol to display on the frontend          | ETH           |
 | -hcaptcha.sitekey | hCaptcha sitekey                                 |               |
 | -hcaptcha.secret  | hCaptcha secret                                  |               |
+| -api.only         | Run in API-only mode without serving the frontend| false         |
+| -api.cors.allowed | Comma-separated list of allowed CORS origins     | *             |
+| -api.cors.headers | Comma-separated list of allowed CORS headers     | Content-Type,Authorization |
+| -api.cors.methods | Comma-separated list of allowed CORS methods     | GET,POST,OPTIONS |
+
+### API-Only Mode
+
+The faucet can be run in API-only mode, where it functions purely as an API server without serving the frontend assets. This is useful when you want to integrate the faucet with your own frontend or when you need to expose the API to other services.
+
+To run the faucet in API-only mode:
+
+```bash
+./eth-faucet -httpport 8080 -wallet.provider http://localhost:8545 -wallet.privkey privkey -api.only
+```
+
+By default, CORS is enabled with permissive settings (`*` for allowed origins). You can configure CORS settings using the following flags:
+
+```bash
+./eth-faucet -httpport 8080 -wallet.provider http://localhost:8545 -wallet.privkey privkey -api.only -api.cors.allowed="https://example.com,https://app.example.com" -api.cors.methods="GET,POST" -api.cors.headers="Content-Type,Authorization,X-Custom-Header"
+```
 
 ### Docker deployment
 
@@ -100,6 +125,12 @@ or
 
 ```bash
 docker run -d -p 8080:8080 -e WEB3_PROVIDER=rpc_endpoint -e KEYSTORE=keystore_path -v `pwd`/keystore:/app/keystore -v `pwd`/password.txt:/app/password.txt chainflag/eth-faucet:1.2.0
+```
+
+To run in API-only mode with Docker:
+
+```bash
+docker run -d -p 8080:8080 -e WEB3_PROVIDER=rpc_endpoint -e PRIVATE_KEY=hex_private_key chainflag/eth-faucet:1.2.0 -api.only -api.cors.allowed="https://example.com"
 ```
 
 ## License

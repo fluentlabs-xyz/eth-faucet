@@ -12,9 +12,15 @@ type Config struct {
 	metricsPort     int
 	metricsPath     string
 	providerURL     string
+
+	// API-only mode configuration
+	apiOnly     bool
+	corsAllowed string
+	corsHeaders string
+	corsMethods string
 }
 
-func NewConfig(network, symbol string, httpPort, interval, proxyCount int, payout float64, hcaptchaSiteKey, hcaptchaSecret string, metricsPort int, metricsPath string, providerURL string) *Config {
+func NewConfig(network, symbol string, httpPort, interval, proxyCount int, payout float64, hcaptchaSiteKey, hcaptchaSecret string, metricsPort int, metricsPath string, providerURL string, apiOnly bool, corsAllowed, corsHeaders, corsMethods string) *Config {
 	return &Config{
 		network:         network,
 		symbol:          symbol,
@@ -27,5 +33,11 @@ func NewConfig(network, symbol string, httpPort, interval, proxyCount int, payou
 		metricsPort:     metricsPort,
 		metricsPath:     metricsPath,
 		providerURL:     providerURL,
+
+		// API-only mode configuration
+		apiOnly:     apiOnly,
+		corsAllowed: corsAllowed,
+		corsHeaders: corsHeaders,
+		corsMethods: corsMethods,
 	}
 }

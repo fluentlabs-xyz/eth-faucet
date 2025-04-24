@@ -12,6 +12,7 @@ import (
 
 	"github.com/jellydator/ttlcache/v2"
 	"github.com/kataras/hcaptcha"
+	"github.com/rs/cors"
 	log "github.com/sirupsen/logrus"
 	"github.com/urfave/negroni/v3"
 
@@ -169,4 +170,60 @@ func (m *RequestMetrics) ServeHTTP(w http.ResponseWriter, r *http.Request, next 
 		m.metrics.RecordRequest(statusCode, r.Method, path)
 		m.metrics.ObserveRequestDuration(path, r.Method, duration)
 	}
+}
+
+// CorsMiddleware handles CORS headers and preflight requests
+type CorsMiddleware struct {
+	allowed string
+	headers string
+	methods string
+	cors    *cors.Cors
+}
+
+// NewCorsMiddleware creates a new CORS middleware using rs/cors
+func NewCorsMiddleware(allowed, headers, methods string) negroni.Handler {
+	// Create a new CORS handler with rs/cors
+	c := cors.New(cors.Options{
+		// We'll handle the headers manually to match the original implementation
+		OptionsPassthrough: true, // Let us handle OPTIONS requests manually
+	})
+
+	return &CorsMiddleware{
+		allowed: allowed,
+		headers: headers,
+		methods: methods,
+		cors:    c,
+	}
+}
+
+// ServeHTTP implements the negroni.Handler interface
+func (c *CorsMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	// Set CORS headers manually to match the original implementation
+	origin := r.Header.Get("Origin")
+
+	// Handle allowed origins
+	if c.allowed == "*" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	} else if origin != "" {
+		// Check if the origin is in the allowed list
+		allowedOrigins := strings.Split(c.allowed, ",")
+		for _, allowedOrigin := range allowedOrigins {
+			if strings.TrimSpace(allowedOrigin) == origin {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				break
+			}
+		}
+	}
+
+	// Set other CORS headers
+	w.Header().Set("Access-Control-Allow-Methods", c.methods)
+	w.Header().Set("Access-Control-Allow-Headers", c.headers)
+
+	// Handle preflight OPTIONS requests
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	next.ServeHTTP(w, r)
 }

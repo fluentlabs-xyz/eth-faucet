@@ -37,14 +37,31 @@ func NewServer(builder chain.TxBuilder, cfg *Config) *Server {
 
 func (s *Server) setupRouter() *http.ServeMux {
 	router := http.NewServeMux()
-	router.Handle("/", http.FileServer(web.Dist()))
+
+	if !s.cfg.apiOnly {
+		router.Handle("/", http.FileServer(web.Dist()))
+	} else {
+		log.Info("Running in API-only mode")
+	}
 
 	limiter := NewLimiter(s.cfg.proxyCount, time.Duration(s.cfg.interval)*time.Minute, s.metrics)
 	hcaptcha := NewCaptcha(s.cfg.hcaptchaSiteKey, s.cfg.hcaptchaSecret, s.metrics)
 	metricsMiddleware := NewRequestMetrics(s.metrics)
 
-	router.Handle("/api/claim", negroni.New(metricsMiddleware, limiter, hcaptcha, negroni.Wrap(s.handleClaim())))
-	router.Handle("/api/info", negroni.New(metricsMiddleware, negroni.Wrap(s.handleInfo())))
+	claimMiddleware := []negroni.Handler{metricsMiddleware, limiter, hcaptcha}
+	infoMiddleware := []negroni.Handler{metricsMiddleware}
+
+	// Add CORS middleware if in API-only mode
+	if s.cfg.apiOnly {
+		corsMiddleware := NewCorsMiddleware(s.cfg.corsAllowed, s.cfg.corsHeaders, s.cfg.corsMethods)
+		claimMiddleware = append([]negroni.Handler{corsMiddleware}, claimMiddleware...)
+		infoMiddleware = append([]negroni.Handler{corsMiddleware}, infoMiddleware...)
+		log.Infof("CORS enabled with allowed origins: %s", s.cfg.corsAllowed)
+	}
+
+	// Apply middleware chain to API endpoints
+	router.Handle("/api/claim", negroni.New(append(claimMiddleware, negroni.Wrap(s.handleClaim()))...))
+	router.Handle("/api/info", negroni.New(append(infoMiddleware, negroni.Wrap(s.handleInfo()))...))
 
 	return router
 }
