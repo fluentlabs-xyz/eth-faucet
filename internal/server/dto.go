@@ -89,7 +89,7 @@ func readAddress(r *http.Request) (string, error) {
 	if err := decodeJSONBody(r, &claimReq); err != nil {
 		return "", err
 	}
-	if !chain.IsValidAddress(claimReq.Address, true) {
+	if !chain.IsValidAddress(claimReq.Address, false) {
 		return "", &malformedRequest{status: http.StatusBadRequest, message: "invalid address"}
 	}
 
