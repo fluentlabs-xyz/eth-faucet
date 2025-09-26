@@ -55,17 +55,25 @@ func (l *Limiter) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.Ha
 		return
 	}
 
-	clientIP := getClientIPFromRequest(l.proxyCount, r)
+	var clientIP string
+	var xForwardedFor string
+	clientIP, xForwardedFor = getClientIPFromRequest(l.proxyCount, r)
 	l.mutex.Lock()
 	if l.limitByKey(w, address) || l.limitByKey(w, clientIP) {
+		log.WithFields(log.Fields{
+			"address":       address,
+			"clientIP":      clientIP,
+			"xForwardedFor": xForwardedFor,
+			"proxyCount":    l.proxyCount,
+		}).Info("Maximum request limit has been reached")
 		l.mutex.Unlock()
 		if l.metrics != nil {
 			l.metrics.RecordFilteredRequest("rate_limit", r.URL.Path)
 		}
 		return
 	}
-	l.cache.SetWithTTL(address, true, l.ttl)
-	l.cache.SetWithTTL(clientIP, true, l.ttl)
+	_ = l.cache.SetWithTTL(address, true, l.ttl)
+	_ = l.cache.SetWithTTL(clientIP, true, l.ttl)
 	l.mutex.Unlock()
 
 	next.ServeHTTP(w, r)
@@ -75,8 +83,10 @@ func (l *Limiter) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.Ha
 		return
 	}
 	log.WithFields(log.Fields{
-		"address":  address,
-		"clientIP": clientIP,
+		"address":       address,
+		"clientIP":      clientIP,
+		"xForwardedFor": xForwardedFor,
+		"proxyCount":    l.proxyCount,
 	}).Info("Maximum request limit has been reached")
 }
 
@@ -89,7 +99,7 @@ func (l *Limiter) limitByKey(w http.ResponseWriter, key string) bool {
 	return false
 }
 
-func getClientIPFromRequest(proxyCount int, r *http.Request) string {
+func getClientIPFromRequest(proxyCount int, r *http.Request) (string, string) {
 	if proxyCount > 0 {
 		xForwardedFor := r.Header.Get("X-Forwarded-For")
 		if xForwardedFor != "" {
@@ -99,7 +109,7 @@ func getClientIPFromRequest(proxyCount int, r *http.Request) string {
 			if partIndex < 0 {
 				partIndex = 0
 			}
-			return strings.TrimSpace(xForwardedForParts[partIndex])
+			return strings.TrimSpace(xForwardedForParts[partIndex]), xForwardedFor
 		}
 	}
 
@@ -107,7 +117,7 @@ func getClientIPFromRequest(proxyCount int, r *http.Request) string {
 	if err != nil {
 		remoteIP = r.RemoteAddr
 	}
-	return remoteIP
+	return remoteIP, ""
 }
 
 type Captcha struct {
